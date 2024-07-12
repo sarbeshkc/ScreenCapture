@@ -1,59 +1,80 @@
-# Screenshot Capture Library
+# Screenshot Capture DLL
 
-This is a high-performance C++ library for capturing screenshots of specific windows, even if the window is covered (but not minimized). The library utilizes the Windows.Graphics.Capture API and Direct3D11 to achieve efficient GPU-accelerated capture.
-
-## Features
-
-- Capture screenshots of specific windows using the window handle (HWND)
-- High-performance capture utilizing the Windows.Graphics.Capture API and Direct3D11
-- Supports running multiple instances simultaneously, with each instance capturing a different window sequentially
-- Callable from C# by compiling the library as a DLL
-
-## Prerequisites
-
-- Windows 10 or later
-- Visual Studio with C++ and C# support
-- Windows SDK
-- DirectX SDK
+This project contains a C++ DLL for capturing screenshots of specific windows in Windows, with improved error handling. Here's how to build the DLL and use it in your C# project.
 
 ## Building the DLL
 
-1. Open the solution in Visual Studio.
-2. Build the project in Release configuration.
-3. The output will be a DLL file named `ScreenshotLibrary.dll`.
+1. Prerequisites:
+   - Visual Studio 2019 or later
+   - Windows 10 SDK (10.0.17763.0 or later)
+   - C++/WinRT extension for Visual Studio
+
+2. Create a new project:
+   - Open Visual Studio
+   - Create a new project
+   - Select "Dynamic-Link Library (DLL)" as the project type
+   - Name your project (e.g., "ScreenshotCaptureDLL")
+
+3. Add source files:
+   - Add `ScreenShotLibrary.h` and `ScreenShot.cpp` to your project
+
+4. Configure project settings:
+   - Right-click on the project in Solution Explorer and select "Properties"
+   - Under "Configuration Properties" -> "C/C++" -> "Language":
+     - Set "C++ Language Standard" to "ISO C++17 Standard (/std:c++17)"
+   - Under "Configuration Properties" -> "C/C++" -> "Preprocessor":
+     - Add "NOMINMAX" to "Preprocessor Definitions"
+   - Under "Configuration Properties" -> "Linker" -> "Input":
+     - Add "d3d11.lib" and "dxgi.lib" to "Additional Dependencies"
+
+5. Build the project:
+   - Set the build configuration to "Release" and the platform to "x64"
+   - Build the solution (F7 or "Build" -> "Build Solution")
+
+The DLL will be created in the "x64/Release" folder of your project.
 
 ## Using the DLL in a C# Project
 
-1. Add a reference to the `ScreenshotLibrary.dll` file in your C# project.
-   - Right-click on your project in the Solution Explorer and select "Add Reference".
-   - Browse to the location of the `ScreenshotLibrary.dll` file and select it.
-   - Click "OK" to add the reference.
+1. Create a new C# project or open an existing one
 
-2. Import the functions from the DLL using the `DllImport` attribute. Create a static class to hold the imported functions:
+2. Add a reference to the DLL:
+   - Right-click on your C# project in Solution Explorer
+   - Select "Add" -> "Reference"
+   - Click "Browse" and navigate to the DLL file you built
+   - Select the DLL and click "Add"
+
+3. Use the improved ScreenshotWrapper class:
 
 ```csharp
 using System;
-using System.Runtime.InteropServices;
+using System.Drawing;
+using System.Windows.Forms;
 
-public static class ScreenshotLibrary
+class Program
 {
-    [DllImport("ScreenshotLibrary.dll", CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr CreateScreenshotCapture(IntPtr windowHandle);
+    static void Main()
+    {
+        IntPtr hwnd = Process.GetProcessesByName("notepad")[0].MainWindowHandle; // Example: capturing Notepad's window
 
-    [DllImport("ScreenshotLibrary.dll", CallingConvention = CallingConvention.Cdecl)]
-    public static extern void DestroyScreenshotCapture(IntPtr capture);
+        try
+        {
+            using (var screenshotWrapper = new ScreenshotWrapper(hwnd))
+            {
+                byte[] screenshotData = screenshotWrapper.CaptureScreenshot(out int width, out int height);
+                
+                // Create a Bitmap from the raw data
+                using (var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    var bitmapData = bitmap.LockBits(new Rectangle(0, 0, width, height), System.Drawing.Imaging.ImageLockMode.WriteOnly, bitmap.PixelFormat);
+                    Marshal.Copy(screenshotData, 0, bitmapData.Scan0, screenshotData.Length);
+                    bitmap.UnlockBits(bitmapData);
 
-    [DllImport("ScreenshotLibrary.dll", CallingConvention = CallingConvention.Cdecl)]
-    public static extern BitmapData CaptureWindow(IntPtr capture);
-
-    [DllImport("ScreenshotLibrary.dll", CallingConvention = CallingConvention.Cdecl)]
-    public static extern void FreeBitmapData(ref BitmapData bitmapData);
-}
-
-[StructLayout(LayoutKind.Sequential)]
-public struct BitmapData
-{
-    public IntPtr Data;
-    public int Width;
-    public int Height;
-}
+                    // Now you can use the bitmap for further processing or save it
+                    bitmap.Save("screenshot.png");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"Last DLL error: {ScreenshotWrapper.Get

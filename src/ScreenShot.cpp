@@ -1,4 +1,4 @@
-#include "../include/ScreenShotLibrary.h"
+#include "ScreenShotLibrary.h"
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -6,11 +6,14 @@
 #include <dxgi1_2.h>
 #include <wrl.h>
 #include <stdexcept>
+#include <mutex>
 
 using namespace winrt::Windows::Graphics::Capture;
 using namespace winrt::Windows::Graphics::DirectX;
 using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
 using namespace Microsoft::WRL;
+
+thread_local std::string lastErrorMessage;
 
 class ScreenshotCapture
 {
@@ -27,11 +30,11 @@ public:
         m_session.Close();
         m_framePool.Close();
         m_captureItem = nullptr;
-        m_d3dContext->Release();
-        m_d3dDevice->Release();
+        if (m_d3dContext) m_d3dContext->Release();
+        if (m_d3dDevice) m_d3dDevice->Release();
     }
 
-    BitmapData CaptureWindow()
+    BitmapData CaptureWindow(CaptureError* error)
     {
         BitmapData bitmapData = { nullptr, 0, 0 };
 
@@ -39,6 +42,11 @@ public:
         {
             // Get the next available captured frame
             auto capturedFrame = m_framePool.TryGetNextFrame();
+            if (!capturedFrame)
+            {
+                throw std::runtime_error("Failed to capture frame.");
+            }
+
             auto surfaceTexture = capturedFrame.Surface().as<IDirect3DSurface>();
 
             // Map the surface texture to access the bitmap data
@@ -69,12 +77,21 @@ public:
             bitmapData.data = bitmapData;
             bitmapData.width = width;
             bitmapData.height = height;
+
+            if (error)
+            {
+                error->errorCode = 0;
+                error->errorMessage = "";
+            }
         }
         catch (const std::exception& ex)
         {
-            // Log the error message
-            // You can replace this with your own logging mechanism
-            OutputDebugStringA(ex.what());
+            if (error)
+            {
+                error->errorCode = -1;
+                error->errorMessage = ex.what();
+            }
+            lastErrorMessage = ex.what();
         }
 
         return bitmapData;
@@ -107,21 +124,30 @@ private:
     GraphicsCaptureItem m_captureItem{ nullptr };
     Direct3D11CaptureFramePool m_framePool{ nullptr };
     GraphicsCaptureSession m_session{ nullptr };
-    ID3D11Device* m_d3dDevice;
-    ID3D11DeviceContext* m_d3dContext;
+    ID3D11Device* m_d3dDevice = nullptr;
+    ID3D11DeviceContext* m_d3dContext = nullptr;
 };
 
-extern "C" __declspec(dllexport) ScreenshotCapture* CreateScreenshotCapture(HWND windowHandle)
+extern "C" __declspec(dllexport) ScreenshotCapture* CreateScreenshotCapture(HWND windowHandle, CaptureError* error)
 {
     try
     {
-        return new ScreenshotCapture(windowHandle);
+        auto capture = new ScreenshotCapture(windowHandle);
+        if (error)
+        {
+            error->errorCode = 0;
+            error->errorMessage = "";
+        }
+        return capture;
     }
     catch (const std::exception& ex)
     {
-        // Log the error message
-        // You can replace this with your own logging mechanism
-        OutputDebugStringA(ex.what());
+        if (error)
+        {
+            error->errorCode = -1;
+            error->errorMessage = ex.what();
+        }
+        lastErrorMessage = ex.what();
         return nullptr;
     }
 }
@@ -131,14 +157,20 @@ extern "C" __declspec(dllexport) void DestroyScreenshotCapture(ScreenshotCapture
     delete capture;
 }
 
-extern "C" __declspec(dllexport) BitmapData CaptureWindow(ScreenshotCapture* capture)
+extern "C" __declspec(dllexport) BitmapData CaptureWindow(ScreenshotCapture* capture, CaptureError* error)
 {
     if (capture != nullptr)
     {
-        return capture->CaptureWindow();
+        return capture->CaptureWindow(error);
     }
     else
     {
+        if (error)
+        {
+            error->errorCode = -1;
+            error->errorMessage = "Invalid ScreenshotCapture pointer";
+        }
+        lastErrorMessage = "Invalid ScreenshotCapture pointer";
         return { nullptr, 0, 0 };
     }
 }
@@ -152,4 +184,9 @@ extern "C" __declspec(dllexport) void FreeBitmapData(BitmapData* bitmapData)
         bitmapData->width = 0;
         bitmapData->height = 0;
     }
+}
+
+extern "C" __declspec(dllexport) const char* GetLastErrorMessage()
+{
+    return lastErrorMessage.c_str();
 }
